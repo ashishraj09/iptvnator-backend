@@ -12,7 +12,7 @@ const originUrl = process.env.CLIENT_URL
   ? process.env.CLIENT_URL
   : isDev
   ? "http://localhost:4200"
-  : "http://localhost:4200";
+  : "https://iptvnator.vercel.app";
 
 const mongoUri = isDev || !process.env.MONGO_URI ? "mongodb://192.168.0.89:27017/iptvnator" : process.env.MONGO_URI;
 const dbName = isDev || !process.env.MONGO_DB_NAME ? "iptvnator" : process.env.MONGO_DB_NAME;
