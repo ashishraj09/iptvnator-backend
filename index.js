@@ -36,6 +36,7 @@ const corsOptions = {
 };
 
 app.use(express.json());
+app.use(cors(corsOptions));
 
 const https = require("https");
 const agent = new https.Agent({
