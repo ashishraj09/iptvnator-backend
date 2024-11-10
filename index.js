@@ -17,9 +17,9 @@ const originUrl = process.env.CLIENT_URL
 console.log(`Development mode: ${isDev}`);
 console.log(`Origin URL: ${originUrl}`);
 
-const mongoUri = isDev || !process.env.MONGO_URI ? "mongodb://192.168.0.89:27017/iptvnator" : process.env.MONGO_URI;
-const dbName = isDev || !process.env.MONGO_DB_NAME ? "iptvnator" : process.env.MONGO_DB_NAME;
-const collectionName = isDev || !process.env.MONGO_COLLECTION_NAME ? "playlists" : process.env.MONGO_COLLECTION_NAME;
+const mongoUri = isDev ? "mongodb://localhost/iptvnator" : process.env.MONGO_URI || "";
+const dbName = isDev ? "iptvnator" : process.env.MONGO_DB_NAME || "";
+const collectionName = isDev ? "playlists" : process.env.MONGO_COLLECTION_NAME || "";
 
 console.log(`dbName: ${dbName}`);
 console.log(`mongoUri: ${mongoUri}`);
@@ -82,6 +82,22 @@ app.get("/xtream", cors(corsOptions), async (req, res) => {
         status: err.response?.status ?? 404,
       });
     });
+});
+
+// New route to check the database connection status
+app.get("/check-db-connection", cors(corsOptions), async (req, res) => {
+  
+  if (!mongoUri || !dbName || !collectionName) {
+    return res.status(200).send({ status: "error", message: "Database is not enabled" });
+  }
+
+  try {
+    await dbService.connect();
+    res.status(200).send({ status: "success", message: "Database is enabled" });
+  } catch (error) {
+    console.error('Error connecting to MongoDB:', error);
+    res.status(200).send({ status: "error", message: "Database is not enabled", error: error.message });
+  }
 });
 
 // New route to add multiple playlists
