@@ -14,6 +14,9 @@ const originUrl = process.env.CLIENT_URL
   ? "http://localhost:4200"
   : "https://iptvnator.vercel.app";
 
+console.log(`Development mode: ${isDev}`);
+console.log(`Origin URL: ${originUrl}`);
+
 const mongoUri = isDev || !process.env.MONGO_URI ? "mongodb://192.168.0.89:27017/iptvnator" : process.env.MONGO_URI;
 const dbName = isDev || !process.env.MONGO_DB_NAME ? "iptvnator" : process.env.MONGO_DB_NAME;
 const collectionName = isDev || !process.env.MONGO_COLLECTION_NAME ? "playlists" : process.env.MONGO_COLLECTION_NAME;
