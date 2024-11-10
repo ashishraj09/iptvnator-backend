@@ -17,7 +17,7 @@ const originUrl = process.env.CLIENT_URL
 console.log(`Development mode: ${isDev}`);
 console.log(`Origin URL: ${originUrl}`);
 
-const mongoUri = isDev ? "mongodb://localhost/iptvnator" : process.env.MONGO_URI || "";
+const mongoUri = isDev ? "mongodb://localhost:27017/iptvnator" : process.env.MONGO_URI || "";
 const dbName = isDev ? "iptvnator" : process.env.MONGO_DB_NAME || "";
 const collectionName = isDev ? "playlists" : process.env.MONGO_COLLECTION_NAME || "";
 
