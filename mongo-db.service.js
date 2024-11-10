@@ -16,10 +16,7 @@ class MongoDBService {
         this.database = this.client.db(this.dbName);
         this.collection = this.database.collection(this.collectionName);
         this.isConnected = true;
-        console.log(`[${new Date().toISOString()}] Connected to MongoDB`);
-        console.log(`URI: ${this.uri}`);
-        console.log(`Database: ${this.dbName}`);
-        console.log(`Collection: ${this.collectionName}`);
+        console.log(`[${new Date().toISOString()}] Connected to MongoDB: ${this.uri}`);
       } catch (error) {
         console.error(`[${new Date().toISOString()}] Error connecting to MongoDB:`, error);
       }
@@ -44,7 +41,7 @@ class MongoDBService {
       console.log(`[${new Date().toISOString()}] Data inserted:`, result.insertedIds);
       return result;
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] Error inserting data into MongoDB:`, error);
+      console.error(`[${new Date().toISOString()}] Error inserting multiple data into MongoDB:`, error);
     }
   }
 
@@ -81,7 +78,7 @@ class MongoDBService {
     }
   }
 
-  async removeAllPlaylists() {
+  async deleteAllPlaylists() {
     try {
       await this.connect();
       const result = await this.collection.deleteMany({});

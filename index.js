@@ -20,12 +20,14 @@ console.log(`Origin URL: ${originUrl}`);
 const mongoUri = isDev ? "mongodb://localhost:27017/iptvnator" : process.env.MONGO_URI || "";
 const dbName = isDev ? "iptvnator" : process.env.MONGO_DB_NAME || "";
 const collectionName = isDev ? "playlists" : process.env.MONGO_COLLECTION_NAME || "";
+let databaseService;
 
-console.log(`dbName: ${dbName}`);
-console.log(`mongoUri: ${mongoUri}`);
-console.log(`collectionName: ${collectionName}`);
-
-const mongoDBService = new MongoDBService(mongoUri, dbName, collectionName);
+if (!mongoUri || !dbName || !collectionName) {
+  console.log("MongoDB not enabled: Missing configuration variables.");
+} else {
+  console.log(`MongoDB enabled: dbName: ${dbName}, mongoUri: ${mongoUri}, collectionName: ${collectionName}`);
+  databaseService = new MongoDBService(mongoUri, dbName, collectionName);
+}
 
 
 const corsOptions = {
@@ -84,27 +86,11 @@ app.get("/xtream", cors(corsOptions), async (req, res) => {
     });
 });
 
-// New route to check the database connection status
-app.get("/check-db-connection", cors(corsOptions), async (req, res) => {
-  
-  if (!mongoUri || !dbName || !collectionName) {
-    return res.status(200).send({ status: "error", message: "Database is not enabled" });
-  }
-
-  try {
-    await dbService.connect();
-    res.status(200).send({ status: "success", message: "Database is enabled" });
-  } catch (error) {
-    console.error('Error connecting to MongoDB:', error);
-    res.status(200).send({ status: "error", message: "Database is not enabled", error: error.message });
-  }
-});
-
 // New route to add multiple playlists
 app.post("/addManyPlaylists", cors(corsOptions), async (req, res) => {
   try {
     const playlists = req.body;
-    const result = await mongoDBService.insertMany(playlists);
+    const result = await databaseService.insertMany(playlists);
     res.status(200).send(result);
   } catch (error) {
     res.status(500).send({ error: 'Error adding multiple playlists to MongoDB' });
@@ -115,20 +101,19 @@ app.post("/addManyPlaylists", cors(corsOptions), async (req, res) => {
 app.post("/addPlaylist", cors(corsOptions), express.json(), async (req, res) => {
   const data = req.body;
   try {
-    const result = await mongoDBService.insertData(data);
-    let insertedData;
-    insertedData = await mongoDBService.readData({ _id: result.insertedId });
+    const result = await databaseService.insertData(data);
+    let insertedData = await databaseService.readData({ _id: result.insertedId });
     res.status(200).send(insertedData);
   } catch (error) {
-    console.error('Error inserting data into MongoDB:', error);
-    res.status(500).send({ error: 'Error inserting data into MongoDB' });
+    console.error('Error inserting multiple data into MongoDB:', error);
+    res.status(500).send({ error: 'Error inserting multiple data into MongoDB' });
   }
 });
 
 app.get("/getPlaylist/:id", cors(corsOptions), async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await mongoDBService.readData({ _id: id });
+    const result = await databaseService.readData({ _id: id });
     res.status(200).send(result);
   } catch (error) {
     res.status(500).send({ error: 'Error reading data from MongoDB' });
@@ -138,7 +123,7 @@ app.get("/getPlaylist/:id", cors(corsOptions), async (req, res) => {
 // Updated route to read all data from MongoDB
 app.get("/getAllPlaylists", cors(corsOptions), async (req, res) => {
   try {
-    const result = await mongoDBService.readDataAll(); // No query parameters passed
+    const result = await databaseService.readDataAll(); // No query parameters passed
     res.status(200).send(result);
   } catch (error) {
     res.status(500).send({ error: 'Error reading data from MongoDB' });
@@ -149,7 +134,7 @@ app.get("/getAllPlaylists", cors(corsOptions), async (req, res) => {
 app.delete("/deletePlaylist/:id", cors(corsOptions), async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await mongoDBService.deleteData({ _id: id});
+    const result = await databaseService.deleteData({ _id: id});
     res.status(200).send(result);
   } catch (error) {
     res.status(500).send({ error: 'Error deleting playlist from MongoDB' });
@@ -157,9 +142,9 @@ app.delete("/deletePlaylist/:id", cors(corsOptions), async (req, res) => {
 });
 
 // New route to remove all playlists
-app.delete("/removeAllPlaylists", cors(corsOptions), async (req, res) => {
+app.delete("/deleteAllPlaylists", cors(corsOptions), async (req, res) => {
   try {
-    const result = await mongoDBService.removeAllPlaylists();
+    const result = await databaseService.deleteAllPlaylists();
     res.status(200).send(result);
   } catch (error) {
     res.status(500).send({ error: 'Error removing all playlists from MongoDB' });
@@ -171,8 +156,8 @@ app.put("/updatePlaylist/:id", cors(corsOptions), async (req, res) => {
   try {
     const { id } = req.params;
     const updatedPlaylist = req.body;
-    const result = await mongoDBService.updateData({ _id: id }, updatedPlaylist);
-    const updatedData = await mongoDBService.readData({ _id: id });
+    const result = await databaseService.updateData({ _id: id }, updatedPlaylist);
+    const updatedData = await databaseService.readData({ _id: id });
     res.status(200).send(updatedData);
   } catch (error) {
     res.status(500).send({ error: 'Error updating playlist in MongoDB' });
