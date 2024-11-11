@@ -18,8 +18,8 @@ console.log(`Development mode: ${isDev}`);
 console.log(`Origin URL: ${originUrl}`);
 
 const mongoUri = isDev ? "mongodb://localhost:27017/iptvnator" : process.env.MONGO_URI || "";
-const dbName = isDev ? "iptvnator" : process.env.MONGO_DB_NAME || "";
-const collectionName = isDev ? "playlists" : process.env.MONGO_COLLECTION_NAME || "";
+const dbName = isDev ? "iptvnator" : process.env.MONGO_DB_NAME || "iptvnator";
+const collectionName = isDev ? "playlists" : process.env.MONGO_COLLECTION_NAME || "playlists";
 let databaseService;
 
 if (!mongoUri || !dbName || !collectionName) {
@@ -29,13 +29,13 @@ if (!mongoUri || !dbName || !collectionName) {
   databaseService = new MongoDBService(mongoUri, dbName, collectionName);
 }
 
-
 const corsOptions = {
   origin: originUrl,
   optionsSuccessStatus: 200,
 };
 
 app.use(express.json());
+app.use(cors(corsOptions));
 
 const https = require("https");
 const agent = new https.Agent({
