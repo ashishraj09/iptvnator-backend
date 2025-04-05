@@ -5,29 +5,20 @@ const epgParser = require("epg-parser");
 const axios = require("axios");
 const cors = require("cors");
 const zlib = require("zlib");
-const MongoDBService = require('./mongo-db.service');
+const LevelDBService = require("./levelDBService");
+const logger = require('./logger');
+const { authenticateAPIKey, authenticateToken } = require('./authMiddleware');
+const { generateToken } = require('./auth');
 
 const isDev = process.env.NODE_ENV === "dev";
 const originUrl = process.env.CLIENT_URL
   ? process.env.CLIENT_URL
   : isDev
   ? "http://localhost:4200"
-  : "https://iptvnator.vercel.app";
+  : "http://localhost:4200";
 
-console.log(`Development mode: ${isDev}`);
-console.log(`Origin URL: ${originUrl}`);
-
-const mongoUri = isDev ? "mongodb://localhost:27017/iptvnator" : process.env.MONGO_URI || "";
-const dbName = isDev ? "iptvnator" : process.env.MONGO_DB_NAME || "iptvnator";
-const collectionName = isDev ? "playlists" : process.env.MONGO_COLLECTION_NAME || "playlists";
-let databaseService;
-
-if (!mongoUri || !dbName || !collectionName) {
-  console.log("MongoDB not enabled: Missing configuration variables.");
-} else {
-  console.log(`MongoDB enabled: dbName: ${dbName}, mongoUri: ${mongoUri}, collectionName: ${collectionName}`);
-  databaseService = new MongoDBService(mongoUri, dbName, collectionName);
-}
+logger.info(`Development mode: ${isDev}`);
+logger.info(`Origin URL: ${originUrl}`);
 
 const corsOptions = {
   origin: originUrl,
@@ -42,11 +33,65 @@ const agent = new https.Agent({
   rejectUnauthorized: false,
 });
 
-app.get("/", (req, res) => res.send("Hello world"));
+// Check if ENABLE_EXTERNAL_DB is true
+const ENABLE_EXTERNAL_DB = process.env.ENABLE_EXTERNAL_DB === "true";
+let databaseService = null;
+let dbEnabled = false;
+
+if (ENABLE_EXTERNAL_DB) {
+  const dbPath = isDev ? "./data/leveldb" : "/app/data";
+  const SECRET_KEY = process.env.SECRET_KEY || 'YOUR-SECRET-KEY';
+  logger.info("ENABLE_EXTERNAL_DB is true. LevelDB is initialized.");
+  logger.info(`Database path: ${dbPath}`);
+  logger.info(`Using Secret key: ${SECRET_KEY}`);
+  try {
+    databaseService = new LevelDBService(dbPath);
+    dbEnabled = true;
+    logger.info(`LevelDB initialized successfully at ${dbPath}.`);
+  } catch (error) {
+    logger.debug(`Failed to initialize LevelDB: ${error.message}`,error);
+    databaseService = null;
+    dbEnabled = false;
+  }
+} else {
+  logger.info("ENABLE_EXTERNAL_DB is false. LevelDB is not initialized.");
+}
+
+app.get("/", (req, res) => res.send("Service is healthy"));
+
+// Route to generate a token, protected by API key
+app.post('/token', authenticateAPIKey, (req, res) => {
+  try {
+    logger.info('[Token Generation] Received request to generate token');
+
+    // Generate the token and get its expiration time
+    const { token, expiresIn } = generateToken({ scope: 'api_access' });
+
+    logger.info('[Token Generation] Token generated successfully');
+    res.status(200).send({ token, expiresIn });
+  } catch (error) {
+    logger.error(`[Token Generation] Error generating token: ${error.message}`, error);
+    res.status(500).send({ error: 'Internal Server Error: Failed to generate token' });
+  }
+});
+
+// Route to check connection status
+app.get("/connectionStatus", cors(corsOptions), async (req, res) => {
+  try {
+    logger.info("[connectionStatus] Checking connection status...");
+    res.status(200).send({
+      status: "OK",
+      dbEnabled, // Updated from DBEnabled to dbEnabled
+    });
+  } catch (error) {
+    logger.debug(`Error checking connection status: ${error.message}`,error);
+    res.status(500).send({ error: "Error checking connection status" });
+  }
+});
 
 app.get("/parse", cors(corsOptions), async (req, res) => {
   const { url } = req.query;
-  if (isDev) console.log(url);
+  if (isDev) logger.info(url);
   if (!url) return res.status(400).send("Missing url");
   const result = await handlePlaylistParse(url);
   if (result.status) {
@@ -57,7 +102,7 @@ app.get("/parse", cors(corsOptions), async (req, res) => {
 
 app.get("/parse-xml", cors(corsOptions), async (req, res) => {
   const { url } = req.query;
-  console.log(url);
+  logger.info(url);
   if (!url) return res.status(400).send("Missing url");
   const result = await fetchEpgDataFromUrl(url);
   if (result.status === 500) {
@@ -86,81 +131,124 @@ app.get("/xtream", cors(corsOptions), async (req, res) => {
     });
 });
 
-// New route to add multiple playlists
-app.post("/addManyPlaylists", cors(corsOptions), async (req, res) => {
+// Route to add multiple playlists
+app.post("/addManyPlaylists", authenticateToken, cors(corsOptions), async (req, res) => {
   try {
     const playlists = req.body;
-    const result = await databaseService.insertMany(playlists);
-    res.status(200).send(result);
+
+    if (!Array.isArray(playlists) || playlists.length === 0) {
+      return res.status(400).send({ error: "Invalid input. Expected an array of playlists." });
+    }
+
+    // Insert multiple playlists into the database
+    await databaseService.insertMany(playlists);
+
+    // Return only the inserted playlists
+    logger.info(`[addManyPlaylists] Successfully added ${playlists.length} playlists.`);
+    res.status(200).send({
+      message: `${playlists.length} playlists added successfully.`,
+      data: playlists, // Return the inserted playlists
+    });
   } catch (error) {
-    res.status(500).send({ error: 'Error adding multiple playlists to MongoDB' });
+    logger.error(`[addManyPlaylists] Error adding multiple playlists to LevelDB: ${error.message}`, error);
+    res.status(500).send({ error: "Error adding multiple playlists to LevelDB" });
   }
 });
 
-// New route to insert data into MongoDB
-app.post("/addPlaylist", cors(corsOptions), express.json(), async (req, res) => {
-  const data = req.body;
+// Route to insert a single playlist into LevelDB
+app.post("/addPlaylist", authenticateToken, cors(corsOptions), async (req, res) => {
   try {
-    const result = await databaseService.insertData(data);
-    let insertedData = await databaseService.readData({ _id: result.insertedId });
-    res.status(200).send(insertedData);
+    const playlist = req.body;
+    logger.info(`[addPlaylist] Adding playlist with _id: ${playlist._id}`);
+    await databaseService.insertData(playlist._id, playlist); // Use _id as the key
+    const insertedPlaylist = await databaseService.readData(playlist._id); // Fetch the inserted playlist
+    res.status(200).send(insertedPlaylist); // Return the inserted playlist
   } catch (error) {
-    console.error('Error inserting multiple data into MongoDB:', error);
-    res.status(500).send({ error: 'Error inserting multiple data into MongoDB' });
+    logger.error(`[addPlaylist] Error adding playlist to LevelDB: ${error.message}`,error);
+    res.status(500).send({ error: "Error adding playlist to LevelDB" });
   }
 });
 
-app.get("/getPlaylist/:id", cors(corsOptions), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const result = await databaseService.readData({ _id: id });
-    res.status(200).send(result);
-  } catch (error) {
-    res.status(500).send({ error: 'Error reading data from MongoDB' });
-  }
-});
-
-// Updated route to read all data from MongoDB
-app.get("/getAllPlaylists", cors(corsOptions), async (req, res) => {
-  try {
-    const result = await databaseService.readDataAll(); // No query parameters passed
-    res.status(200).send(result);
-  } catch (error) {
-    res.status(500).send({ error: 'Error reading data from MongoDB' });
-  }
-});
-  
-// New route to delete a playlist by ID
-app.delete("/deletePlaylist/:id", cors(corsOptions), async (req, res) => {
+// Route to get a playlist by ID
+app.get("/getPlaylist/:id", authenticateToken, cors(corsOptions), async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await databaseService.deleteData({ _id: id});
+    logger.info(`[getPlaylist] Fetching playlist with _id: ${id}`);
+    const result = await databaseService.readData(id); // Use _id as the key
+    if (!result) {
+      return res.status(404).send({ error: `Playlist with ${id} not found` });
+    }
     res.status(200).send(result);
   } catch (error) {
-    res.status(500).send({ error: 'Error deleting playlist from MongoDB' });
+    logger.error(`[getPlaylist] Error reading data from LevelDB: ${error.message}`,error);
+    res.status(500).send({ error: "Error reading data from LevelDB" });
   }
 });
 
-// New route to remove all playlists
-app.delete("/deleteAllPlaylists", cors(corsOptions), async (req, res) => {
+// Route to get all playlists from LevelDB
+app.get("/getAllPlaylists", authenticateToken, cors(corsOptions), async (req, res) => {
   try {
-    const result = await databaseService.deleteAllPlaylists();
+    logger.info("[getAllPlaylists] Fetching all playlists");
+    const result = await databaseService.readDataAll(); // Fetch all playlists
     res.status(200).send(result);
   } catch (error) {
-    res.status(500).send({ error: 'Error removing all playlists from MongoDB' });
+    logger.error(`[getAllPlaylists] Error reading data from LevelDB: ${error.message}`,error);
+    res.status(500).send({ error: "Error reading data from LevelDB" });
   }
 });
 
-// New route to update a playlist by ID
-app.put("/updatePlaylist/:id", cors(corsOptions), async (req, res) => {
+// Route to delete a playlist by ID from LevelDB
+app.delete("/deletePlaylist/:id", authenticateToken, cors(corsOptions), async (req, res) => {
+  try {
+    const { id } = req.params;
+    logger.info(`[deletePlaylist] Deleting playlist with _id ${id}`);
+    await databaseService.deleteData(id); // Use _id as the key
+    res.status(200).send({ message: `Playlist with ${id} deleted successfully` });
+  } catch (error) {
+    logger.debug(`[deletePlaylist] Error deleting playlist from LevelDB: ${error.message}`,error);
+    res.status(500).send({ error: "Error deleting playlist from LevelDB" });
+  }
+});
+
+// Route to delete all playlists
+app.delete("/deleteAllPlaylists", authenticateToken, cors(corsOptions), async (req, res) => {
+  try {
+    logger.info("[deleteAllPlaylists] Deleting all playlists");
+    await databaseService.deleteAllData(); // Use deleteAll from LevelDBService
+    res.status(200).send({ message: "All playlists deleted successfully" });
+  } catch (error) {
+    logger.debug(`[deleteAllPlaylists] Error deleting all playlists from LevelDB: ${error.message}`,error);
+    res.status(500).send({ error: "Error deleting all playlists from LevelDB" });
+  }
+});
+
+// Route to update a playlist by ID in LevelDB
+app.put("/updatePlaylist/:id", authenticateToken, cors(corsOptions), async (req, res) => {
   try {
     const { id } = req.params;
     const updatedPlaylist = req.body;
-    const result = await databaseService.updateData({ _id: id }, updatedPlaylist);
-    const updatedData = await databaseService.readData({ _id: id });
+
+    logger.info(`[updatePlaylist] Updating playlist with _id ${id}`);
+    // Check if the playlist exists
+    const existingPlaylist = await databaseService.readData(id);
+    if (!existingPlaylist) {
+      logger.warn(`[updatePlaylist] Checking if playlist with _id ${id} exists in the database.`);
+      return res.status(404).send({ error: `Playlist with ID ${id} not found` });
+    }
+
+    // Merge the updated data with the existing playlist
+    const mergedPlaylist = { ...existingPlaylist, ...updatedPlaylist };
+
+    // Update the playlist in the database
+    await databaseService.updateData(id, mergedPlaylist);
+
+    // Fetch the updated playlist
+    const updatedData = await databaseService.readData(id);
+
     res.status(200).send(updatedData);
   } catch (error) {
-    res.status(500).send({ error: 'Error updating playlist in MongoDB' });
+    logger.error(`Error updating playlist in LevelDB: ${error.message}`,error);
+    res.status(500).send({ error: "Error updating playlist in LevelDB" });
   }
 });
 
@@ -178,7 +266,7 @@ app.get("/stalker", cors(corsOptions), async (req, res) => {
       },
     })
     .then((result) => {
-      console.log(result.data);
+      logger.info(result.data);
       return res.send({
         payload: result.data,
         action: req.query?.action,
@@ -209,13 +297,13 @@ const fetchEpgDataFromUrl = (epgUrl) => {
     return axios
       .get(epgUrl.trim(), axiosConfig)
       .then((response) => {
-        console.log(epgLoggerLabel, "url content was fetched...");
+        logger.info(epgLoggerLabel, "url content was fetched...");
         const { data } = response;
         if (epgUrl.endsWith(".gz")) {
-          console.log(epgLoggerLabel, "start unzipping...");
+          logger.info(epgLoggerLabel, "start unzipping...");
           const output = zlib.gunzipSync(new Buffer.from(data)).toString();
           const result = getParsedEpg(output);
-          console.log(result);
+          logger.info(result);
           return result;
         } else {
           const result = getParsedEpg(data.toString());
@@ -223,10 +311,10 @@ const fetchEpgDataFromUrl = (epgUrl) => {
         }
       })
       .catch((err) => {
-        console.log(epgLoggerLabel, err);
+        logger.error(epgLoggerLabel, err);
       });
   } catch (error) {
-    console.log(epgLoggerLabel, error);
+    logger.error(epgLoggerLabel, error);
   }
 };
 
@@ -235,7 +323,7 @@ const fetchEpgDataFromUrl = (epgUrl) => {
  * @param xmlString xml file content from the fetched url as string
  */
 const getParsedEpg = (xmlString) => {
-  console.log(epgLoggerLabel, "start parsing...");
+  logger.info(epgLoggerLabel, "start parsing...");
   return epgParser.parse(xmlString);
 };
 
@@ -313,5 +401,5 @@ const createPlaylistObject = (name, playlist, url) => {
 
 const port = process.env.PORT || 3000;
 app.listen(port, () =>
-  console.log(`Server running on ${port}, http://localhost:${port}`)
+  logger.info(`Server running on ${port}, http://localhost:${port}`)
 );
