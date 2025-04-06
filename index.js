@@ -15,7 +15,7 @@ const originUrl = process.env.CLIENT_URL
   ? process.env.CLIENT_URL
   : isDev
   ? "http://localhost:4200"
-  : "http://localhost:4200";
+  : "https://iptvnator.vercel.app";
 
 logger.info(`Development mode: ${isDev}`);
 logger.info(`Origin URL: ${originUrl}`);
